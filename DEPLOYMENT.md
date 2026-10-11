@@ -1,51 +1,41 @@
 # Free deployment guide
 
-This project can use Vercel Hobby for the frontend, Koyeb's Free Instance for the API, and a MongoDB Atlas Free cluster for the database. This is suitable for a personal hackathon demo, not production healthcare data.
+This project can run on Vercel Hobby (frontend), Render Free (API), MongoDB Atlas Free (database), and Mailjet Free (verification emails). Use this for a demo only; free tiers have limits and are not suitable for real patient records.
 
-## 1. Put the project in a private GitHub repository
+## 1. Database
 
-The Vercel and Koyeb Git integrations deploy from GitHub. Keep the repository private. The root `.gitignore` excludes `.env` files and uploaded user images; commit the `.env.example` files instead.
+Create a MongoDB Atlas free cluster and database user. Allow network access from `0.0.0.0/0` for Render because the free service does not provide a fixed outbound IP. Use a strong database password and URL-encode special characters in the connection string. Free clusters have limited storage and no backups; do not store real patient data here.
 
-## 2. Create the database
+## 2. Email sender
 
-Create an Atlas Free cluster and a database user. Add the network access rule required for Koyeb to connect (Koyeb does not provide a fixed outbound IP for this setup), then copy the Atlas connection string. Replace its username, password, and database name; URL-encode special characters in the password.
+Create a Mailjet account on its free plan. Add an email address you control under **Account settings → Senders & Domains**, then click the confirmation link Mailjet sends you. A custom domain is not required for validating a single sender address. Mailjet warns that Gmail/Yahoo/Outlook sender addresses can land in spam or fail delivery because their DNS authentication cannot be configured; a domain sender is recommended for reliable delivery.
 
-Atlas Free clusters have a 512 MB storage limit and no backups. Do not use this free setup for real patient records.
+From Mailjet's API key settings, copy the API key and secret key. Enter them directly into Render as `MAILJET_API_KEY` and `MAILJET_SECRET_KEY`; set `EMAIL_FROM` to the exact validated sender address. Keep the secret key private.
 
-## 3. Deploy the API on Koyeb
+## 3. Deploy the API on Render
 
-Create a Web Service from the GitHub repository using the Node.js buildpack. Set the work directory to `backend`, the run command to `npm start`, select the **Free** instance, and expose port `5000` over HTTP.
+In Render, create a Blueprint from this private GitHub repository and use the included `render.yaml`. Render will prompt for the secret values. Set:
 
-Add these runtime environment variables in Koyeb:
-
-- `NODE_ENV=production`
 - `MONGO_URI`: the Atlas connection string
-- `JWT_SECRET`: a new, long, random secret
-- `GROQ_API_KEY`: the Groq API key
-- `EMAIL_USER` and `EMAIL_PASS`: the Gmail address and its app password used for verification emails
-- `FRONTEND_URL`: the exact Vercel site origin, without a trailing slash
+- `GROQ_API_KEY`: your Groq API key
+- `MAILJET_API_KEY` and `MAILJET_SECRET_KEY`: the Mailjet API credentials
+- `EMAIL_FROM`: the sender address validated in Mailjet
+- `FRONTEND_URL`: the exact Vercel site origin after the frontend has deployed
 
-Koyeb's Free Instance allows outbound SMTP on encrypted ports, while blocking port 25; the current Gmail mailer uses an encrypted Gmail SMTP connection. Keep the deployment on the Free Instance. Koyeb requires a valid payment method for its Starter plan, and additional paid resources can incur charges.
+The Blueprint generates `JWT_SECRET` and sets `NODE_ENV=production`. Render Free services spin down after 15 minutes without traffic and can take time to wake. They have an ephemeral filesystem, so uploaded avatars can disappear after restart. Render blocks outbound SMTP on free services; the production Mailjet integration uses HTTPS instead.
 
-The API sleeps after an hour without traffic and needs time to wake on the next request. Its filesystem is temporary: uploaded avatars under `backend/uploads` can disappear after a restart or reschedule. User and record data stored in Atlas remains separate from those local files.
-
-After deploy, open the Koyeb `*.koyeb.app` URL and confirm the API responds with `HacXLerate API is running...`.
+When the API deploys, its health endpoint `/` should respond with `HacXLerate API is running...`. Copy the service's `https://...onrender.com` URL.
 
 ## 4. Deploy the frontend on Vercel
 
-Import the same GitHub repository into Vercel and set the project root to `frontend`. Use:
+Import the repository into Vercel and set the project root to `frontend`. Use the default Vite build (`npm run build`) and output directory `dist`. Set `VITE_API_URL` to the Render API origin, without a trailing slash, then deploy. The included Vercel rewrite supports direct navigation to frontend routes.
 
-- Build command: `npm run build`
-- Output directory: `dist`
-- Environment variable: `VITE_API_URL` set to the Koyeb API origin, without a trailing slash
+Finally, set Render's `FRONTEND_URL` to the Vercel site origin and redeploy the API so CORS and Socket.IO accept the deployed frontend.
 
-The included `frontend/vercel.json` rewrite supports direct navigation to routes such as `/register` and `/try-report`.
+## Free-tier limitations
 
-After the first deploy, set `FRONTEND_URL` on Koyeb to the final Vercel origin and redeploy the API so CORS and Socket.IO accept the deployed site.
-
-## Free-tier limits
-
-- Vercel Hobby is for personal, non-commercial projects.
-- Koyeb's Free Instance has 512 MB RAM and 0.1 vCPU, scales to zero after one hour idle, and has no persistent volume.
-- Atlas Free has 512 MB storage and no backups.
-- Groq API usage is subject to Groq's separate plan and limits.
+- Vercel Hobby is for personal, non-commercial use.
+- Render Free sleeps after inactivity and has no persistent disk.
+- Atlas Free has limited storage and no backups.
+- Mailjet Free allows up to 200 emails per day and 6,000 per month; free-email sender addresses may have poor deliverability.
+- Groq usage has separate limits.
