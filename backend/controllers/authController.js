@@ -103,7 +103,7 @@ exports.register = async (req, res) => {
       await sendVerificationCode(user);
     } catch (error) {
       const message = error.code === 'EMAIL_NOT_CONFIGURED'
-        ? 'Email verification is not configured. Set Mailjet credentials and a verified sender address.'
+        ? 'Email verification is not configured. Set EMAIL_USER and EMAIL_PASS.'
         : 'MediCode could not submit the verification email. Check the backend terminal for the [EMAIL] error, then try again.';
 
       return res.status(503).json({ message });
@@ -228,7 +228,7 @@ exports.resendVerification = async (req, res) => {
       await sendVerificationCode(user);
     } catch (error) {
       const message = error.code === 'EMAIL_NOT_CONFIGURED'
-        ? 'Email service is not configured. Set Mailjet credentials and a verified sender address.'
+        ? 'Email service is not configured. Set EMAIL_USER and EMAIL_PASS.'
         : 'MediCode could not submit the email. Check the backend terminal for the [EMAIL] error.';
 
       return res.status(503).json({ message });
@@ -329,7 +329,7 @@ exports.forgotPassword = async (req, res) => {
 
       return res.status(503).json({
         message: error.code === 'EMAIL_NOT_CONFIGURED'
-          ? 'Email service is not configured. Set Mailjet credentials and a verified sender address.'
+          ? 'Email service is not configured. Set EMAIL_USER and EMAIL_PASS.'
           : 'Could not send the reset email. Check the backend terminal for the [EMAIL] error.',
       });
     }

@@ -7,13 +7,18 @@ const maskEmail = (value = '') => {
 };
 
 async function sendOtpEmail({ to, otp, purpose = 'verification' }) {
-  const MAILJET_API_KEY = process.env.MAILJET_API_KEY?.trim();
-  const MAILJET_SECRET_KEY = process.env.MAILJET_SECRET_KEY?.trim();
-  const EMAIL_FROM = process.env.EMAIL_FROM?.trim();
   const EMAIL_USER = process.env.EMAIL_USER?.trim();
+  // Gmail App Passwords are often copied with spaces; remove whitespace safely.
   const EMAIL_PASS = process.env.EMAIL_PASS?.replace(/\s+/g, '');
 
   console.log(`[EMAIL] Request received for ${maskEmail(to)} (${purpose}).`);
+
+  if (!EMAIL_USER || !EMAIL_PASS) {
+    const error = new Error('Email is not configured. Set EMAIL_USER and EMAIL_PASS.');
+    error.code = 'EMAIL_NOT_CONFIGURED';
+    console.error('[EMAIL] Configuration missing: EMAIL_USER or EMAIL_PASS is empty.');
+    throw error;
+  }
 
   const isVerification = purpose === 'verification';
   const subject = isVerification
@@ -25,7 +30,10 @@ async function sendOtpEmail({ to, otp, purpose = 'verification' }) {
   const text = `Use this MediCore code to ${action}: ${otp}. It expires in 10 minutes. Never share this code. If you did not request it, ignore this email.`;
   const html = `<!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+</head>
 <body style="margin:0;padding:28px;background:#f3f5fa;font-family:Arial,sans-serif;color:#172033">
   <main style="max-width:520px;margin:0 auto;background:#fff;border:1px solid #e7eaf2;border-radius:16px;padding:32px">
     <p style="margin:0;color:#2563eb;font-weight:700;font-size:14px;letter-spacing:2px">MEDICORE</p>
@@ -37,100 +45,6 @@ async function sendOtpEmail({ to, otp, purpose = 'verification' }) {
   </main>
 </body>
 </html>`;
-
-  if (MAILJET_API_KEY || MAILJET_SECRET_KEY) {
-    if (!MAILJET_API_KEY || !MAILJET_SECRET_KEY || !EMAIL_FROM) {
-      const error = new Error('Email is not configured. Set MAILJET_API_KEY, MAILJET_SECRET_KEY, and EMAIL_FROM.');
-      error.code = 'EMAIL_NOT_CONFIGURED';
-      throw error;
-    }
-
-    const authorization = Buffer.from(`${MAILJET_API_KEY}:${MAILJET_SECRET_KEY}`).toString('base64');
-    const transporter = nodemailer.createTransport({
-      name: 'mailjet-https',
-      version: '1.0.0',
-      close() {},
-      send(mail, done) {
-        const message = mail.data;
-        const sender = typeof message.from === 'string'
-          ? message.from
-          : message.from?.address || EMAIL_FROM;
-        const recipients = (Array.isArray(message.to) ? message.to : [message.to])
-          .flatMap((recipient) => (Array.isArray(recipient) ? recipient : [recipient]))
-          .map((recipient) => (typeof recipient === 'string' ? recipient : recipient?.address))
-          .filter(Boolean);
-
-        fetch('https://api.mailjet.com/v3.1/send', {
-          method: 'POST',
-          headers: {
-            Authorization: `Basic ${authorization}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            Messages: [{
-              From: { Email: sender, Name: 'MediCore' },
-              To: recipients.map((email) => ({ Email: email })),
-              Subject: message.subject,
-              TextPart: message.text,
-              HTMLPart: message.html,
-            }],
-          }),
-        })
-          .then(async (response) => ({ response, result: await response.json().catch(() => ({})) }))
-          .then(({ response, result }) => {
-            const mailjetMessage = result.Messages?.[0];
-            if (!response.ok || mailjetMessage?.Status !== 'success') {
-              const error = new Error(`Mailjet email request failed with status ${response.status}.`);
-              error.code = 'EMAIL_API_ERROR';
-              console.error('[EMAIL] Mailjet delivery failed:', { status: response.status });
-              done(error);
-              return;
-            }
-
-            const accepted = mailjetMessage.To?.map((recipient) => recipient.Email) || recipients;
-            const messageId = mailjetMessage.To?.[0]?.MessageID;
-            console.log('[EMAIL] Nodemailer Mailjet transport accepted message:', {
-              messageId,
-              to: maskEmail(to),
-              purpose,
-            });
-            done(null, {
-              envelope: { from: sender, to: recipients },
-              messageId: messageId ? String(messageId) : undefined,
-              accepted,
-              rejected: [],
-              response: 'Mailjet accepted the message over HTTPS',
-            });
-          })
-          .catch((error) => {
-            error.code = error.code || 'EMAIL_API_ERROR';
-            console.error('[EMAIL] Mailjet request failed:', { code: error.code, message: error.message });
-            done(error);
-          });
-      },
-    });
-
-    try {
-      return await transporter.sendMail({
-        from: { name: 'MediCore', address: EMAIL_FROM },
-        to,
-        subject,
-        text,
-        html,
-      });
-    } finally {
-      transporter.close();
-    }
-  }
-
-  if (!EMAIL_USER || !EMAIL_PASS) {
-    const error = new Error(
-      'Email is not configured. Set Mailjet credentials, or EMAIL_USER and EMAIL_PASS for local Gmail SMTP.'
-    );
-    error.code = 'EMAIL_NOT_CONFIGURED';
-    console.error('[EMAIL] Configuration missing.');
-    throw error;
-  }
 
   const transporter = nodemailer.createTransport({
     service: 'gmail',
@@ -149,19 +63,29 @@ async function sendOtpEmail({ to, otp, purpose = 'verification' }) {
       html,
     });
 
-    if (!info.accepted?.length || info.rejected?.length) {
+    const accepted = Array.isArray(info.accepted) ? info.accepted : [];
+    const rejected = Array.isArray(info.rejected) ? info.rejected : [];
+
+    console.log('[EMAIL] SMTP sendMail result:', {
+      messageId: info.messageId,
+      acceptedCount: accepted.length,
+      rejectedCount: rejected.length,
+      response: info.response,
+    });
+
+    if (!accepted.length || rejected.length) {
       const error = new Error('Gmail did not accept the recipient address.');
       error.code = 'EMAIL_RECIPIENT_REJECTED';
       throw error;
     }
 
-    console.log('[EMAIL] SMTP accepted message:', { messageId: info.messageId, to: maskEmail(to), purpose });
     return info;
   } catch (error) {
-    console.error('[EMAIL] SMTP delivery submission failed:', {
+    console.error('[EMAIL] Delivery submission failed:', {
       code: error.code || 'UNKNOWN',
       message: error.message,
       responseCode: error.responseCode,
+      response: error.response,
     });
     throw error;
   } finally {
