@@ -46,38 +46,81 @@ async function sendOtpEmail({ to, otp, purpose = 'verification' }) {
     }
 
     const authorization = Buffer.from(`${MAILJET_API_KEY}:${MAILJET_SECRET_KEY}`).toString('base64');
-    const response = await fetch('https://api.mailjet.com/v3.1/send', {
-      method: 'POST',
-      headers: {
-        Authorization: `Basic ${authorization}`,
-        'Content-Type': 'application/json',
+    const transporter = nodemailer.createTransport({
+      name: 'mailjet-https',
+      version: '1.0.0',
+      close() {},
+      send(mail, done) {
+        const message = mail.data;
+        const sender = typeof message.from === 'string'
+          ? message.from
+          : message.from?.address || EMAIL_FROM;
+        const recipients = (Array.isArray(message.to) ? message.to : [message.to])
+          .flatMap((recipient) => (Array.isArray(recipient) ? recipient : [recipient]))
+          .map((recipient) => (typeof recipient === 'string' ? recipient : recipient?.address))
+          .filter(Boolean);
+
+        fetch('https://api.mailjet.com/v3.1/send', {
+          method: 'POST',
+          headers: {
+            Authorization: `Basic ${authorization}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            Messages: [{
+              From: { Email: sender, Name: 'MediCore' },
+              To: recipients.map((email) => ({ Email: email })),
+              Subject: message.subject,
+              TextPart: message.text,
+              HTMLPart: message.html,
+            }],
+          }),
+        })
+          .then(async (response) => ({ response, result: await response.json().catch(() => ({})) }))
+          .then(({ response, result }) => {
+            const mailjetMessage = result.Messages?.[0];
+            if (!response.ok || mailjetMessage?.Status !== 'success') {
+              const error = new Error(`Mailjet email request failed with status ${response.status}.`);
+              error.code = 'EMAIL_API_ERROR';
+              console.error('[EMAIL] Mailjet delivery failed:', { status: response.status });
+              done(error);
+              return;
+            }
+
+            const accepted = mailjetMessage.To?.map((recipient) => recipient.Email) || recipients;
+            const messageId = mailjetMessage.To?.[0]?.MessageID;
+            console.log('[EMAIL] Nodemailer Mailjet transport accepted message:', {
+              messageId,
+              to: maskEmail(to),
+              purpose,
+            });
+            done(null, {
+              envelope: { from: sender, to: recipients },
+              messageId: messageId ? String(messageId) : undefined,
+              accepted,
+              rejected: [],
+              response: 'Mailjet accepted the message over HTTPS',
+            });
+          })
+          .catch((error) => {
+            error.code = error.code || 'EMAIL_API_ERROR';
+            console.error('[EMAIL] Mailjet request failed:', { code: error.code, message: error.message });
+            done(error);
+          });
       },
-      body: JSON.stringify({
-        Messages: [{
-          From: { Email: EMAIL_FROM, Name: 'MediCore' },
-          To: [{ Email: to }],
-          Subject: subject,
-          TextPart: text,
-          HTMLPart: html,
-        }],
-      }),
     });
-    const result = await response.json().catch(() => ({}));
 
-    if (!response.ok || result.Messages?.[0]?.Status !== 'success') {
-      const error = new Error(`Mailjet email request failed with status ${response.status}.`);
-      error.code = 'EMAIL_API_ERROR';
-      console.error('[EMAIL] Mailjet delivery failed:', { status: response.status });
-      throw error;
+    try {
+      return await transporter.sendMail({
+        from: { name: 'MediCore', address: EMAIL_FROM },
+        to,
+        subject,
+        text,
+        html,
+      });
+    } finally {
+      transporter.close();
     }
-
-    const message = result.Messages[0].To?.[0];
-    console.log('[EMAIL] Mailjet accepted message:', {
-      messageId: message?.MessageID,
-      to: maskEmail(to),
-      purpose,
-    });
-    return result;
   }
 
   if (!EMAIL_USER || !EMAIL_PASS) {

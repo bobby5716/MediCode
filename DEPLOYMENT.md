@@ -10,7 +10,7 @@ Create a MongoDB Atlas free cluster and database user. Allow network access from
 
 Create a Mailjet account on its free plan. Add an email address you control under **Account settings → Senders & Domains**, then click the confirmation link Mailjet sends you. A custom domain is not required for validating a single sender address. Mailjet warns that Gmail/Yahoo/Outlook sender addresses can land in spam or fail delivery because their DNS authentication cannot be configured; a domain sender is recommended for reliable delivery.
 
-From Mailjet's API key settings, copy the API key and secret key. Enter them directly into Render as `MAILJET_API_KEY` and `MAILJET_SECRET_KEY`; set `EMAIL_FROM` to the exact validated sender address. Keep the secret key private.
+From Mailjet's API key settings, copy the API key and secret key. Enter them directly into Render as `MAILJET_API_KEY` and `MAILJET_SECRET_KEY`; set `EMAIL_FROM` to the exact validated sender address. The app uses Nodemailer with a custom HTTPS transport to Mailjet, because Render Free blocks direct SMTP connections. Keep the secret key private.
 
 ## 3. Deploy the API on Render
 
